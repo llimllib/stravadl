@@ -39,6 +39,8 @@ query(
 """
 )
 for fname in glob("gpxdata/*.gpx"):
+    # usage cribbed from:
+    # https://github.com/tkrajina/gpx-cmd-tools/blob/master/gpxtools/gpxinfo.py
     g = gpx.parse(open(fname))
     activity_id, _ = os.path.splitext(os.path.basename(fname))
 
