@@ -21,6 +21,7 @@ from zipfile import ZipFile
 # 1065965007.gpx
 # 1071640857.fit.gz
 # * do something with clubs, photos or routes too
+# * currently it's loading all fields as text - not sure why that is happening
 
 DB = sqlite3.connect("strava.db")
 
