@@ -1,3 +1,9 @@
+// TODO:
+// * rewrite this all to store activity metadata in sqlite maybe?
+// * pull more data from the strava pages
+// * reorder gpxdata to come after activity downloads
+// * getActivities should look for newer activities so you can keep your db in
+//   sync with strava
 const fs = require("fs");
 const https = require("https");
 
@@ -13,6 +19,17 @@ async function login(page) {
 
   // wait for the home page to load
   await page.waitForSelector("#athlete-profile");
+}
+
+function readJSON(filename, defaultValue = null) {
+  if (!fs.existsSync(filename)) {
+    return defaultValue;
+  }
+  return JSON.parse(fs.readFileSync(filename));
+}
+
+function writeJSON(filename, data) {
+  fs.writeFileSync(filename, JSON.stringify(data));
 }
 
 async function getActivities(browser, page) {
@@ -63,9 +80,11 @@ async function downloadAllGPX(page, activities) {
 
     const gpx_url = `https://www.strava.com/activities/${activityID}/export_gpx`;
     const outfile = `gpxdata/${activityID}.gpx`;
+    const nogpx = readJSON("activities_without_gpx.json", []);
 
-    // if we haven't already downloaded the gpx, go get it
-    if (!fs.existsSync(outfile)) {
+    // if we haven't already downloaded the gpx, and it's not listed as
+    // missing, go get it
+    if (!fs.existsSync(outfile) && !nogpx.includes(activityID)) {
       console.log("downloading", gpx_url);
 
       const cookies = await page.cookies();
@@ -83,13 +102,19 @@ async function downloadAllGPX(page, activities) {
             },
             (res) => {
               // If there is no GPX file for the activity, strava returns a 302
-              if (res.statusCode != 200) {
-                console.log(
+              if (res.statusCode == 302) {
+                nogpx.push(activityID);
+                console.warn(
                   "no GPX data available for",
                   activityID,
                   res.statusCode
                 );
                 resolve();
+                return;
+              } else if (res.statusCode != 200) {
+                reject(
+                  `Got status code ${res.statusCode} on ${gpxURL}.\n${res}`
+                );
                 return;
               }
 
@@ -107,6 +132,8 @@ async function downloadAllGPX(page, activities) {
           });
       });
     }
+
+    writeJSON("activities_without_gpx.json", nogpx);
   }
 }
 
@@ -118,12 +145,7 @@ function pairs(arr) {
 }
 
 async function downloadStravaData(page, activities) {
-  let stravaData;
-  if (fs.existsSync("stravaData.json")) {
-    stravaData = JSON.parse(fs.readFileSync("stravaData.json"));
-  } else {
-    stravaData = {};
-  }
+  const stravaData = readJSON("stravaData.json", {});
 
   for (const activity of activities) {
     const activityID = activity[2].match(/activities\/(\d+)/)[1];
@@ -152,13 +174,12 @@ async function downloadStravaData(page, activities) {
       )
     );
 
-    // TODO: there are many
     process.stderr.write(".");
     stravaData[activityID] = {
       ...stats,
       ...moreStats,
     };
-    fs.writeFileSync("stravaData.json", JSON.stringify(stravaData));
+    writeJSON("stravaData.json", stravaData);
   }
   process.stderr.write("\n");
 }
@@ -174,23 +195,21 @@ async function downloadStravaData(page, activities) {
   const page = await browser.newPage();
 
   if (fs.existsSync(".creds.json")) {
-    const cookies = JSON.parse(fs.readFileSync(".creds.json"));
+    // TODO: this doesn't handle expired cookies
+    const cookies = readJSON(".creds.json");
     await page.setCookie(...cookies);
   } else {
     await login(page);
-    fs.writeFileSync(".creds.json", JSON.stringify(await page.cookies()));
+    writeJSON(".creds.json", await page.cookies());
   }
 
   // these are the titles and links to the runs we found
   if (!fs.existsSync("activities.json")) {
-    fs.writeFileSync(
-      "activities.json",
-      JSON.stringify(await getActivities(browser, page))
-    );
+    writeJSON("activities.json", await getActivities(browser, page));
   }
 
-  const activities = JSON.parse(fs.readFileSync("activities.json"));
-  // await downloadAllGPX(page, activities);
+  const activities = readJSON("activities.json");
+  await downloadAllGPX(page, activities);
   await downloadStravaData(page, activities);
 
   await browser.close();
